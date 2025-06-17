@@ -1,5 +1,3 @@
-# from google import genai
-# from google.genai import types
 import google.generativeai as genai
 from google.generativeai import types
 from google.generativeai import GenerativeModel, GenerationConfig, configure
@@ -10,10 +8,7 @@ import asyncio
 import os
 from dotenv import load_dotenv
 
-# GEMINI_API_KEY = "AIzaSyA4haLCLJSrStMAXgtxckAvJtkzM6Ru70I"
-
-load_dotenv()
-configure(api_key="GEMINI_API_KEY")
+configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 current_dir = os.path.dirname(__file__)  # 현재 스크립트 파일 위치
 config_path = os.path.join(current_dir, "mcp_server_config.json")
