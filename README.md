@@ -50,9 +50,14 @@ GEMINI_API_KEY=<your key here>
 ```powershell
 echo ".env" >> .gitignore
 ```
+
 ## 6️⃣ mcp_server_config.json 파일 추가
 
 ```powershell
 ni .\mcp_server_config.json
 ```
 
+## 7️⃣ 결과 확인
+
+```powershell
+python client3.py
