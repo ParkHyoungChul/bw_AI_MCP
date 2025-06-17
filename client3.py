@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-current_dir = os.path.dirname(__file__)  # 현재 스크립트 파일 위치
+current_dir = os.path.dirname(__file__)
 config_path = os.path.join(current_dir, "mcp_server_config.json")
 
 with open(config_path, "r", encoding="utf-8") as f:
