@@ -1,115 +1,144 @@
+# Gemini API 모듈을 불러옵니다.
 import google.generativeai as genai
 from google.generativeai import types
 from google.generativeai import GenerativeModel, GenerationConfig, configure
+
+# MCP (Multi-Modal Command Protocol) 관련 모듈을 불러옵니다.
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+# JSON 처리, 비동기 처리, 파일 경로 처리에 필요한 기본 모듈
 import json
 import asyncio
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # .env 파일에서 API 키를 불러올 때 사용
 
+# .env 파일을 로드하여 환경변수로 만듭니다.
+load_dotenv()
+
+# Gemini API 키를 설정합니다. (환경변수에서 가져옵니다)
 configure(api_key=os.getenv("GEMINI_API_KEY"))
 
+# 현재 파이썬 파일의 위치를 가져옵니다
 current_dir = os.path.dirname(__file__)
+
+# MCP 서버 설정이 담긴 JSON 파일의 경로를 만듭니다
 config_path = os.path.join(current_dir, "mcp_server_config.json")
 
+# 설정 파일을 열어 해당 MCP 서버의 정보를 불러옵니다
 with open(config_path, "r", encoding="utf-8") as f:
     config = json.load(f)["mcpServers"]["py-mcp-naver-search"]
-    
+
+# MCP 서버를 실행할 때 사용할 명령어와 인자를 설정합니다
 server_params = StdioServerParameters(
     command=config["command"], 
     args=config["args"], 
-    env=None
+    env=None  # 환경변수가 따로 없다면 None으로 설정
 )
 
+# 본격적인 실행 함수 (비동기로 실행)
 async def run():
+    # MCP 서버를 stdio 방식으로 실행하고 연결합니다
     async with stdio_client(server_params) as (read, write):
+        # 세션을 생성하고 서버와 통신 준비를 마칩니다
         async with ClientSession(read, write) as session:
-            await session.initialize()
+            await session.initialize()  # MCP 서버 초기화
 
+            # MCP 서버에 등록된 툴 목록을 가져옵니다
             tools_info = await session.list_tools()
-        
+
+            # Gemini 모델에 넣기 전에 불필요한 항목을 제거하는 함수 정의
             def clean_schema(schema):
                 if isinstance(schema, dict):
                     cleaned = {}
-
                     for k, v in schema.items():
+                        # 설명, 예시, 제목 등은 제거
                         if k in ["title", "default", "examples", "description", "$schema", "nullable"]:
                             continue
+                        # 필수 항목은 유지
                         if k == "required":
                             cleaned[k] = v
                         else:
                             cleaned[k] = clean_schema(v)
-
                     return cleaned
                 elif isinstance(schema, list):
                     return [clean_schema(item) for item in schema]
                 else:
                     return schema
-            tools = [
-                    types.Tool(
-                        function_declarations=[
-                            {
-                                "name": tool.name,
-                                "description": tool.description,
-                                "parameters": clean_schema(tool.inputSchema)
-                            }
-                        ]
-                    )
-                    for tool in tools_info.tools
-                ]
 
+            # MCP의 툴을 Gemini가 이해할 수 있는 형태(types.Tool)로 변환합니다
+            tools = [
+                types.Tool(
+                    function_declarations=[{
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": clean_schema(tool.inputSchema)
+                    }]
+                )
+                for tool in tools_info.tools
+            ]
+
+            # 모델에 전달할 프롬프트 (명령어) 설정
             prompt = f"네이버 블로그 검색 툴을 사용해서 고기를 검색해서 결과 요약해줘, 첫번째 페이지만 정렬방식은 기본으로"
 
+            # Gemini 모델 인스턴스를 생성 (도구 포함)
             model = GenerativeModel(
-                model_name="gemini-2.0-flash-lite",
-                tools=tools,  # MCP에서 변환한 function_declarations list
+                model_name="gemini-2.0-flash-lite",  # 모델 이름 (경량형 버전)
+                tools=tools,  # 위에서 등록한 툴들을 넣어줌
                 generation_config=GenerationConfig(
-                    temperature=0,
+                    temperature=0,  # 창의성은 최소화 (정확한 명령 수행에 집중)
                 ),
             )
+
+            # 모델에 프롬프트를 보내고 응답을 받음
             response = model.generate_content(prompt)
 
+            # 응답 안의 각 파트를 가져옴
             parts = response.candidates[0].content.parts
 
-            # function_call 먼저 찾아봅니다
+            # 모델이 툴을 호출하려는지 확인하기 위한 변수
             function_call = None
             for part in parts:
                 if hasattr(part, "function_call") and part.function_call:
                     function_call = part.function_call
                     break
 
-            # function_call 이 있으면 MCP tool 호출
+            # 모델이 툴을 호출했을 경우 (function_call이 존재할 때)
             if function_call:
+                # 해당 툴을 MCP 서버에 실제로 호출하고 결과를 받음
                 result = await session.call_tool(
                     function_call.name, arguments=dict(function_call.args)
                 )
 
-                print("--- Formatted Result ---") 
+                print("--- Formatted Result ---")
 
                 try:
-                    response_text = result.content[0].text  # MCP에서 받은 원본 텍스트
+                    # MCP 툴에서 받은 결과는 일반적으로 텍스트입니다
+                    response_text = result.content[0].text
 
-                    # 먼저 json 파싱 시도
+                    # 결과를 JSON 형태로 파싱해봅니다
                     try:
                         search_result = json.loads(response_text)
-                        print(json.dumps(search_result, indent=2))
+                        print(json.dumps(search_result, indent=2))  # 보기 좋게 출력
                     except json.JSONDecodeError:
-                        # json 파싱 실패시 일반 텍스트 출력
+                        # JSON 형식이 아니라면 그냥 텍스트로 출력
                         print("MCP server returned non-JSON response:")
                         print(response_text)
 
                 except (IndexError, AttributeError):
+                    # 예외 발생 시 구조 문제로 간주
                     print("Unexpected result structure from MCP server:")
                     print(result)
 
-            # function_call이 생성되지 않은 경우
+            # 모델이 툴 호출을 생성하지 않은 경우
             else:
                 print("No function call was generated by the model.")
                 
+                # 모델이 툴 대신 그냥 텍스트로 답한 경우
                 for part in parts:
                     if hasattr(part, "text") and part.text:
                         print("Model response:")
                         print(part.text)
 
+# 비동기 함수 실행
 asyncio.run(run())
